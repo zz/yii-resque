@@ -173,7 +173,12 @@ class Resque_Worker
             // Attempt to find and reserve a job
             $job = false;
             if (!$this->paused) {
-                $job = $this->reserve();
+                try {
+                    $job = $this->reserve();
+                }
+                catch (\RedisException $e) {
+                    $this->log(array('message' => 'Redis exception caught: ' . $e->getMessage(), 'data' => array('type' => 'fail', 'log' => $e->getMessage(), 'time' => time())), self::LOG_TYPE_ALERT);
+                }
             }
 
             if (!$job) {
@@ -368,7 +373,6 @@ class Resque_Worker
         pcntl_signal(SIGUSR1, array($this, 'killChild'));
         pcntl_signal(SIGUSR2, array($this, 'pauseProcessing'));
         pcntl_signal(SIGCONT, array($this, 'unPauseProcessing'));
-        pcntl_signal(SIGPIPE, array($this, 'reestablishRedisConnection'));
         $this->log(array('message' => 'Registered signals', 'data' => array('type' => 'signal')), self::LOG_TYPE_DEBUG);
     }
 
@@ -389,16 +393,6 @@ class Resque_Worker
     {
         $this->log(array('message' => 'CONT received; resuming job processing', 'data' => array('type' => 'resume')), self::LOG_TYPE_INFO);
         $this->paused = false;
-    }
-
-    /**
-     * Signal handler for SIGPIPE, in the event the redis connection has gone away.
-     * Attempts to reconnect to redis, or raises an Exception.
-     */
-    public function reestablishRedisConnection()
-    {
-        $this->log(array('message' => 'SIGPIPE received; attempting to reconnect', 'data' => array('type' => 'reconnect')), self::LOG_TYPE_INFO);
-        Resque::redis()->establishConnection();
     }
 
     /**
@@ -564,16 +558,6 @@ class Resque_Worker
             return false;
         }
 
-        /*if ($this->logger === null) {
-            if ($this->logLevel === self::LOG_NORMAL && $code !== self::LOG_TYPE_DEBUG) {
-                fwrite($this->logOutput, "*** " . $message['message'] . "\n");
-            } else if ($this->logLevel === self::LOG_VERBOSE) {
-                fwrite($this->logOutput, "** [" . strftime('%T %Y-%m-%d') . "] " . $message['message'] . "\n");
-            } else {
-                return false;
-            }
-            return true;
-        } else {*/
         $extra = array();
 
         if (is_array($message)) {
@@ -613,8 +597,6 @@ class Resque_Worker
                 }
             }
 
-
-
         } else if ($code === self::LOG_TYPE_DEBUG && $this->logLevel === self::LOG_VERBOSE) {
             if ($this->logger === null) {
                 fwrite($this->logOutput, "[" . date('c') . "] " . $message . "\n");
@@ -626,15 +608,24 @@ class Resque_Worker
         }
 
          return true;
-        //}
     }
 
+    /**
+     * Register class instance as a logger
+     * @param  object 	$logger 	Class instance
+     * @return void
+     */
     public function registerLogger($logger = null)
     {
         $this->logger = $logger->getInstance();
         Resque::redis()->hset('workerLogger', (string)$this, json_encode(array($logger->handler, $logger->target)));
     }
 
+    /**
+     * Get current logger instance
+     * @param  string 	$workerId 	Worker id
+     * @return object
+     */
     public function getLogger($workerId)
     {
         $settings = json_decode(Resque::redis()->hget('workerLogger', (string)$workerId));

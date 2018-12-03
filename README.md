@@ -15,42 +15,42 @@ Yii resque is a component for Yii to queue your background jobs, this component 
 - Add to your ```config/main.php``` and your ```config/console.php```
 
 ```php
+...
+'components'=>array(
     ...
-    'components'=>array(
-        ...
-        'resque'=>array(
-            'class' => 'application.components.yii-resque.RResque',
-            'server' => 'localhost',     // Redis server address
-            'port' => '6379',            // Redis server port
-            'database' => 0,             // Redis database number
-            'password' => '',            // Redis password auth, set to '' or null when no auth needed
-            'includeFiles' => array()    // Absolute path of files that will be included when initiate queue
-        ),
-        ...
-    )
+    'resque'=>array(
+        'class' => 'application.components.yii-resque.RResque',
+        'server' => 'localhost',     // Redis server address
+        'port' => '6379',            // Redis server port
+        'database' => 0,             // Redis database number
+        'password' => '',            // Redis password auth, set to '' or null when no auth needed
+        'includeFiles' => array()    // Absolute path of files that will be included when initiate queue
+        'loghandler' => 'RotatingFile' // Monolog handler type without "handler"
+        'logtarget' => '/var/log/mylog' // Target log file or configuration (please refer to logging section)
+    ),
     ...
+)
+...
 ```
-
-- Change path for Yii framework folder in ```components/yii-resque/bin/resque```
 
 - You may want to add these additional lines to your ```console.php``` for fixing auto loading and enabling the usage of models and helpers inside your workers :
 
 ```php
-    ...
-    'import' => array(
-        'application.models.*',
-        'application.helpers.*',
-        'application.components.*',
-    ),
+...
+'import' => array(
+    'application.models.*',
+    'application.helpers.*',
+    'application.components.*',
+),
 ```
 
 For performance reason you can just load required class by adding ```Yii::import()``` on your ```setUp``` function inside worker class, e.g :
 
 ```php
-    public function setUp()
-    {
-        Yii::import('application.models.*');
-    }
+public function setUp()
+{
+    Yii::import('application.models.*');
+}
 ```
 
 ## How to
@@ -60,26 +60,55 @@ For performance reason you can just load required class by adding ```Yii::import
 You can put this line where ever you want to add jobs to queue
 
 ```php
-    Yii::app()->resque->createJob('queue_name', 'Worker_ClassWorker', $args = array());
+Yii::app()->resque->createJob('queue_name', 'Worker_ClassWorker', $args = array(), $track = true);
 ```
 
 Put your workers inside Worker folder and name the class with ```Worker_``` as prefix, e.g you want to create worker with name SendEmail then you can create file inside Worker folder and name it SendEmail.php, class inside this file must be ```Worker_SendEmail```
+
+### Delete Job
+
+This method could delete or remove job based on queue, worker class, and/or job id :
+
+```php
+// This will remove job with key 'b6487da4b6d162f958bb06b405df6963' inside 'queue_name' queue and worker 'Worker_ClassWorker'
+Yii::app()->resque->deleteJob('queue_name', 'Worker_ClassWorker', 'b6487da4b6d162f958bb06b405df6963');
+
+// This will remove all jobs inside worker 'Worker_ClassWorker' and 'queue_name' queue
+Yii::app()->resque->deleteJob('queue_name', 'Worker_ClassWorker');
+
+// This will remove all jobs inside 'queue_name' queue
+Yii::app()->resque->deleteJob('queue_name');
+```
+
+This method will return ```boolean```.
 
 ### Create Delayed Job
 
 You can run job at specific time
 
 ```php
-    $time = 1332067214;
-    Yii::app()->resque->enqueueJobAt($time, 'queue_name', 'Worker_ClassWorker', $args = array());
+$time = 1332067214;
+Yii::app()->resque->enqueueJobAt($time, 'queue_name', 'Worker_ClassWorker', $args = array(), $track = true);
 ```
 
 or run job after n second 
 
 ```php
-    $in = 3600;
-    $args = array('id' => $user->id);
-    Yii::app()->resque->enqueueIn($in, 'email', 'Worker_ClassWorker', $args);
+$in = 3600;
+$args = array('id' => $user->id);
+Yii::app()->resque->enqueueIn($in, 'email', 'Worker_ClassWorker', $args, $track = true);
+```
+
+### Check Job Status
+
+You can get job status by this code :
+
+```php
+// This will return int : 1, 2, 3, 4, or 63
+$int = Yii::app()->resque->status($queue_token);
+
+// This will return string : waiting, running, failed, completed, or scheduled
+$string = Yii::app()->resque->statusToString($int);
 ```
 
 ### Create Recurring Job
@@ -87,23 +116,31 @@ or run job after n second
 This is some trick that sometime useful if you want to do some recurring job like sending weekly newsletter, I just made some modification in my worker ```tearDown``` event
 
 ```php
-    public function tearDown()
-    {
-        $interval = 3600; # This job will repeat every hour
+public function tearDown()
+{
+    $interval = 3600; # This job will repeat every hour
 
-        # Add next job queue based on interval
-        Yii::app()->resque->enqueueJobIn($interval, 'queue_name', 'Worker_Newsletter', $args = array());
-    }
+    # Add next job queue based on interval
+    Yii::app()->resque->enqueueJobIn($interval, 'queue_name', 'Worker_Newsletter', $args = array());
+}
 ```
 
 So everytime job has done completely the worker will send queue for same job.
+
+### Get Total Scheduled Jobs
+
+This will return total of scheduled jobs in queue (EXCLUDE all active job)
+
+```php
+Yii::app()->resque->getDelayedJobsCount();
+```
 
 ### Get Current Queues
 
 This will return all job in queue (EXCLUDE all active job)
 
 ```php
-    Yii::app()->resque->getQueues();
+Yii::app()->resque->getQueues();
 ```
 
 ### Start and Stop workers
@@ -113,31 +150,31 @@ Run this command from your console/terminal :
 Start queue
 
 ```bash
-    yiic rresque start
+yiic rresque start
 ```
 
 or 
 
 ```bash
-    yiic rresque start --queue=queue_name --interval=5 --verbose=0
+yiic rresque start --queue=queue_name --interval=5 --verbose=0
 ```
 
 Start delayed or scheduled queue
 
 ```bash
-    yiic rresque startrecurring
+yiic rresque startrecurring
 ```
 
 Stop queue
 
 ```bash
-    yiic rresque stop
+yiic rresque stop
 ```
 
 Stop queue with QUIT signal
 
 ```bash
-    yiic rresque stop --quit=true
+yiic rresque stop --quit=true
 ```
 
 ## Start Worker Options
@@ -171,12 +208,9 @@ Set to `1` if you want to see more information in log file.
 --count=[integer]
 ```
 
-* Log handler name and log handler target
+## Logging
 
-```bash
---loghandler=[string] --logtarget=[string]
-```
-You can see available log handler at [Monolog-Init](https://github.com/kamisama/Monolog-Init).
+I'm using [Monolog](https://github.com/Seldaek/monolog) for logging with help from [Monolog-Init](https://github.com/kamisama/Monolog-Init), so you can refer to both of repository to see available handler and how to use it.
 
 ## Copyrights
 
